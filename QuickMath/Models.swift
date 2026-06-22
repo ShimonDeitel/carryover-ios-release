@@ -1,35 +1,58 @@
-import Foundation
+import SwiftUI
 import SwiftData
 
-// MARK: - SwiftData models
+// MARK: - SwiftData Models
 
 @Model
-final class WaveEntry {
-    var id: UUID
-    var date: Date
-    var level: Int
-    var partOfDay: String
-    var tag: String?
+final class CarryTask {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var createdDate: Date
+    var completedDate: Date?
+    var carryCount: Int
+    var dropped: Bool
 
-    init(id: UUID = UUID(), date: Date = .now, level: Int, partOfDay: String = "day", tag: String? = nil) {
-        self.id = id
-        self.date = date
-        self.level = level
-        self.partOfDay = partOfDay
-        self.tag = tag
+    init(title: String) {
+        self.id = UUID()
+        self.title = title
+        self.createdDate = Date()
+        self.completedDate = nil
+        self.carryCount = 0
+        self.dropped = false
+    }
+
+    var isComplete: Bool { completedDate != nil }
+    var isActive: Bool { !dropped && !isComplete }
+    var ageDescription: String {
+        if carryCount == 0 { return "Today" }
+        if carryCount == 1 { return "1 day carried" }
+        return "\(carryCount) days carried"
     }
 }
 
 @Model
-final class TrendCache {
-    var id: UUID
-    var weekStart: Date
-    var average: Double
+final class DailyRollover {
+    @Attribute(.unique) var id: UUID
+    var date: Date
+    var carriedTaskIDs: [UUID]
 
-    init(id: UUID = UUID(), weekStart: Date, average: Double) {
-        self.id = id
-        self.weekStart = weekStart
-        self.average = average
+    init(date: Date, carriedTaskIDs: [UUID]) {
+        self.id = UUID()
+        self.date = date
+        self.carriedTaskIDs = carriedTaskIDs
+    }
+}
+
+@Model
+final class AppSetting {
+    @Attribute(.unique) var id: UUID
+    var rolloverHour: Int
+    var theme: String
+
+    init(rolloverHour: Int = 7, theme: String = "system") {
+        self.id = UUID()
+        self.rolloverHour = rolloverHour
+        self.theme = theme
     }
 }
 
@@ -40,88 +63,140 @@ final class AppModel: ObservableObject {
     let container: ModelContainer
     weak var store: Store?
 
-    @Published private(set) var recentEntries: [WaveEntry] = []
-    @Published private(set) var todayEntry: WaveEntry? = nil
-    @Published private(set) var allEntries: [WaveEntry] = []
+    @Published private(set) var activeTasks: [CarryTask] = []
+    @Published private(set) var completedTasks: [CarryTask] = []
+    @Published private(set) var droppedTasks: [CarryTask] = []
 
     init(container: ModelContainer) {
         self.container = container
         reload()
+        performRolloverIfNeeded()
     }
 
     static func makeContainer() -> ModelContainer {
-        let schema = Schema([WaveEntry.self, TrendCache.self])
+        let schema = Schema([CarryTask.self, DailyRollover.self, AppSetting.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
             let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            return try! ModelContainer(for: schema, configurations: [fallback])
+            return (try? ModelContainer(for: schema, configurations: [fallback]))!
         }
     }
 
     func reload() {
         let ctx = container.mainContext
-        let descriptor = FetchDescriptor<WaveEntry>(sortBy: [SortDescriptor(\.date, order: .reverse)])
-        let fetched = (try? ctx.fetch(descriptor)) ?? []
-        allEntries = fetched
-        recentEntries = Array(fetched.prefix(7))
-        todayEntry = fetched.first(where: { Calendar.current.isDateInToday($0.date) })
+        let allTasks = (try? ctx.fetch(FetchDescriptor<CarryTask>())) ?? []
+        activeTasks = allTasks
+            .filter { $0.isActive }
+            .sorted { $0.carryCount > $1.carryCount }
+        completedTasks = allTasks
+            .filter { $0.isComplete }
+            .sorted { ($0.completedDate ?? .distantPast) > ($1.completedDate ?? .distantPast) }
+        droppedTasks = allTasks
+            .filter { $0.dropped && !$0.isComplete }
+            .sorted { $0.createdDate > $1.createdDate }
     }
 
     func refresh() { reload() }
 
-    // MARK: Log energy level
-    func logEnergy(level: Int, partOfDay: String = "day", tag: String? = nil) {
+    // MARK: - Task Operations
+
+    func addTask(title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let task = CarryTask(title: trimmed)
+        container.mainContext.insert(task)
+        try? container.mainContext.save()
+        reload()
+        Haptics.success()
+    }
+
+    func completeTask(_ task: CarryTask) {
+        task.completedDate = Date()
+        try? container.mainContext.save()
+        reload()
+        Haptics.success()
+    }
+
+    func uncompleteTask(_ task: CarryTask) {
+        task.completedDate = nil
+        try? container.mainContext.save()
+        reload()
+    }
+
+    func dropTask(_ task: CarryTask) {
+        task.dropped = true
+        try? container.mainContext.save()
+        reload()
+        Haptics.warning()
+    }
+
+    func restoreTask(_ task: CarryTask) {
+        task.dropped = false
+        try? container.mainContext.save()
+        reload()
+    }
+
+    func deleteTask(_ task: CarryTask) {
+        container.mainContext.delete(task)
+        try? container.mainContext.save()
+        reload()
+    }
+
+    // MARK: - Rollover Logic
+
+    private func performRolloverIfNeeded() {
         let ctx = container.mainContext
-        // Replace existing today entry if same partOfDay
-        if let existing = allEntries.first(where: {
-            Calendar.current.isDateInToday($0.date) && $0.partOfDay == partOfDay
-        }) {
-            existing.level = level
-            existing.tag = tag
-        } else {
-            let entry = WaveEntry(level: level, partOfDay: partOfDay, tag: tag)
-            ctx.insert(entry)
-        }
+        let today = Calendar.current.startOfDay(for: Date())
+
+        let rollovers = (try? ctx.fetch(FetchDescriptor<DailyRollover>())) ?? []
+        let todayRollover = rollovers.first { Calendar.current.isDate($0.date, inSameDayAs: today) }
+        guard todayRollover == nil else { return }
+
+        let allTasks = (try? ctx.fetch(FetchDescriptor<CarryTask>())) ?? []
+        let carried = allTasks.filter { $0.isActive }
+        for t in carried { t.carryCount += 1 }
+
+        let rollover = DailyRollover(date: today, carriedTaskIDs: carried.map { $0.id })
+        ctx.insert(rollover)
         try? ctx.save()
         reload()
     }
 
-    // MARK: 7-day rolling average
-    var sevenDayAverage: Double {
-        let relevant = recentEntries.prefix(7)
-        guard !relevant.isEmpty else { return 0 }
-        return Double(relevant.map(\.level).reduce(0, +)) / Double(relevant.count)
+    // MARK: - Insights (Pro)
+
+    var topProcrastinated: [CarryTask] {
+        let all = (try? container.mainContext.fetch(FetchDescriptor<CarryTask>())) ?? []
+        return all.filter { !$0.isComplete }.sorted { $0.carryCount > $1.carryCount }
     }
 
-    // MARK: Best time of day (pro)
-    var bestTimeOfDay: String {
-        let mornings = allEntries.filter { $0.partOfDay == "morning" }
-        let evenings = allEntries.filter { $0.partOfDay == "evening" }
-        let morningAvg = mornings.isEmpty ? 0.0 : Double(mornings.map(\.level).reduce(0, +)) / Double(mornings.count)
-        let eveningAvg = evenings.isEmpty ? 0.0 : Double(evenings.map(\.level).reduce(0, +)) / Double(evenings.count)
-        if morningAvg == 0 && eveningAvg == 0 { return "Not enough data" }
-        if morningAvg >= eveningAvg { return "Morning" }
-        return "Evening"
+    var totalCarriedToday: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        let rollovers = (try? container.mainContext.fetch(FetchDescriptor<DailyRollover>())) ?? []
+        return rollovers.first { Calendar.current.isDate($0.date, inSameDayAs: today) }?.carriedTaskIDs.count ?? 0
     }
 
-    // MARK: Current streak
-    var currentStreak: Int {
-        var streak = 0
-        var checkDate = Calendar.current.startOfDay(for: .now)
-        let daySet = Set(allEntries.map { Calendar.current.startOfDay(for: $0.date) })
-        while daySet.contains(checkDate) {
-            streak += 1
-            checkDate = Calendar.current.date(byAdding: .day, value: -1, to: checkDate)!
-        }
-        return streak
+    var avgCarryCount: Double {
+        let all = (try? container.mainContext.fetch(FetchDescriptor<CarryTask>())) ?? []
+        guard !all.isEmpty else { return 0 }
+        return Double(all.reduce(0) { $0 + $1.carryCount }) / Double(all.count)
     }
+
+    var longestStreakTaskTitle: String? {
+        topProcrastinated.first?.title
+    }
+
+    // MARK: - Delete All
 
     func deleteAllData() {
         let ctx = container.mainContext
-        try? ctx.delete(model: WaveEntry.self)
-        try? ctx.delete(model: TrendCache.self)
+        let tasks = (try? ctx.fetch(FetchDescriptor<CarryTask>())) ?? []
+        tasks.forEach { ctx.delete($0) }
+        let rollovers = (try? ctx.fetch(FetchDescriptor<DailyRollover>())) ?? []
+        rollovers.forEach { ctx.delete($0) }
+        let settings = (try? ctx.fetch(FetchDescriptor<AppSetting>())) ?? []
+        settings.forEach { ctx.delete($0) }
         try? ctx.save()
         reload()
     }

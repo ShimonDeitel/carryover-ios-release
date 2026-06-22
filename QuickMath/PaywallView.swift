@@ -4,113 +4,126 @@ struct PaywallView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
 
-    private let benefits = [
-        ("clock.arrow.circlepath", "Unlimited multi-month wave history and zoom"),
-        ("waveform.path.ecg", "Morning vs evening dual-wave comparison"),
-        ("lightbulb", "Best-time-of-day insights and gentle daily nudge")
+    private let proFeatures = [
+        ("chart.bar.fill", "Age insights showing your most-procrastinated tasks over time"),
+        ("clock.arrow.trianglehead.2.counterclockwise.rotate.90", "Snooze, schedule and bulk-drop carried items"),
+        ("bell.badge.fill", "Custom rollover time and a morning carry-over reminder")
     ]
 
     var body: some View {
         NavigationStack {
             ZStack {
                 QMBackground()
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack(spacing: 28) {
+                            // Header
+                            VStack(spacing: 10) {
+                                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                                    .font(.system(size: 52))
+                                    .foregroundStyle(Color.qmAccent)
+                                    .padding(.top, 8)
 
-                ScrollView {
-                    VStack(spacing: 28) {
-                        // Icon + title
-                        VStack(spacing: 12) {
-                            Image(systemName: "waveform.path.ecg")
-                                .font(.system(size: 56, weight: .thin))
-                                .foregroundStyle(Color.qmAccent)
+                                Text("Carryover Pro")
+                                    .font(.title.weight(.bold))
+                                    .foregroundStyle(.primary)
 
-                            Text("Tideline Pro")
-                                .font(.largeTitle.weight(.bold))
+                                Text("$0.99 / month. Auto-renews until you cancel.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(.top, 12)
 
-                            Text("$0.99 / month. Auto-renews until you cancel.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 16)
-
-                        // Benefits
-                        VStack(spacing: 0) {
-                            ForEach(Array(benefits.enumerated()), id: \.offset) { idx, benefit in
-                                HStack(spacing: 14) {
-                                    Image(systemName: benefit.0)
-                                        .foregroundStyle(Color.qmAccent)
-                                        .frame(width: 28)
-                                    Text(benefit.1)
-                                        .font(.subheadline)
-                                    Spacer()
-                                }
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 16)
-
-                                if idx < benefits.count - 1 {
-                                    Divider().padding(.leading, 58)
+                            // Benefits
+                            VStack(spacing: 0) {
+                                ForEach(proFeatures.indices, id: \.self) { i in
+                                    let (icon, text) = proFeatures[i]
+                                    HStack(alignment: .top, spacing: 14) {
+                                        Image(systemName: icon)
+                                            .font(.system(size: 20))
+                                            .foregroundStyle(Color.qmAccent)
+                                            .frame(width: 28)
+                                            .padding(.top, 1)
+                                        Text(text)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 14)
+                                    if i < proFeatures.count - 1 {
+                                        Divider().padding(.leading, 58)
+                                    }
                                 }
                             }
-                        }
-                        .background(Color.qmCard, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .padding(.horizontal, 16)
+                            .background(Color.qmCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .padding(.horizontal)
 
-                        // Unlock button
-                        Button {
-                            Task {
-                                await store.purchase()
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                if store.purchaseInFlight {
-                                    ProgressView()
-                                        .tint(.white)
-                                }
-                                Text("Unlock for \(store.displayPrice)/month")
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
-                        .prominentButton()
-                        .disabled(store.purchaseInFlight)
-                        .padding(.horizontal, 16)
-
-                        // Restore
-                        Button("Restore Purchase") {
-                            Task { await store.restore() }
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(Color.qmAccent)
-
-                        // Legal
-                        VStack(spacing: 8) {
-                            Text("Subscription automatically renews each month at \(store.displayPrice) unless cancelled at least 24 hours before the renewal date. Manage or cancel anytime in your Apple Account subscriptions.")
+                            // Disclosure
+                            Text("Subscription automatically renews monthly at \(store.displayPrice) unless cancelled at least 24 hours before the end of the current period. Cancel anytime in your Apple Account settings.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
 
-                            HStack(spacing: 16) {
+                            // Terms & Privacy
+                            HStack(spacing: 20) {
                                 Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                                     .font(.caption)
                                     .foregroundStyle(Color.qmAccent)
-                                Link("Privacy Policy", destination: URL(string: "https://shimondeitel.github.io/tideline-site/privacy.html")!)
+                                Link("Privacy Policy", destination: URL(string: "https://shimondeitel.github.io/carryover-site/privacy.html")!)
                                     .font(.caption)
                                     .foregroundStyle(Color.qmAccent)
                             }
-                        }
-                        .padding(.horizontal, 24)
 
-                        Spacer(minLength: 16)
+                            Spacer(minLength: 120)
+                        }
                     }
+
+                    // Bottom CTA
+                    VStack(spacing: 12) {
+                        Button {
+                            Task { await store.purchase() }
+                        } label: {
+                            Group {
+                                if store.purchaseInFlight {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Text("Unlock Carryover Pro")
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .prominentButton()
+                        .disabled(store.purchaseInFlight)
+                        .padding(.horizontal)
+
+                        Button {
+                            Task { await store.restore() }
+                        } label: {
+                            Text("Restore Purchase")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.qmAccent)
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.top, 8)
+                    .background(.ultraThinMaterial)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
+                        .foregroundStyle(Color.qmAccent)
                 }
             }
-            .onChange(of: store.isPro) { _, newValue in
-                if newValue { dismiss() }
+            .onChange(of: store.isPro) { _, newVal in
+                if newVal { dismiss() }
             }
         }
     }

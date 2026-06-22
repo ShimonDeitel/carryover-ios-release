@@ -1,137 +1,185 @@
 import SwiftUI
-import Charts
 
+/// Primary entry and action screen — the full task list with swipe actions and completion.
 struct GridView: View {
     @EnvironmentObject var appModel: AppModel
+    @EnvironmentObject var store: Store
 
-    @State private var sliderValue: Double = 5
-    @State private var logged = false
-
-    private var chartEntries: [WaveEntry] {
-        Array(appModel.recentEntries.reversed())
-    }
+    @State private var showCompletedSection = false
+    @State private var newTaskText = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
-        VStack(spacing: 20) {
-            // Wave chart
-            if chartEntries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 44))
-                        .foregroundStyle(Color.qmAccent.opacity(0.4))
-                    Text("Log your first energy level below")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(height: 140)
-                .frame(maxWidth: .infinity)
-            } else {
-                Chart {
-                    ForEach(Array(chartEntries.enumerated()), id: \.offset) { idx, entry in
-                        AreaMark(
-                            x: .value("Day", idx),
-                            yStart: .value("Base", 0),
-                            yEnd: .value("Level", entry.level)
-                        )
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.qmAccent.opacity(0.25), Color.qmAccent.opacity(0.05)],
-                                startPoint: .top,
-                                endPoint: .bottom
+        ZStack {
+            QMBackground()
+            VStack(spacing: 0) {
+                // Add task bar
+                HStack(spacing: 10) {
+                    TextField("What's left to do?", text: $newTaskText)
+                        .focused($fieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit { submitTask() }
+                        .padding(.vertical, 11)
+                        .padding(.horizontal, 14)
+                        .background(Color.qmField, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    Button(action: submitTask) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundStyle(
+                                newTaskText.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? Color.secondary
+                                : Color.qmAccent
                             )
-                        )
-                        .interpolationMethod(.catmullRom)
-
-                        LineMark(
-                            x: .value("Day", idx),
-                            y: .value("Level", entry.level)
-                        )
-                        .foregroundStyle(Color.qmAccent)
-                        .lineStyle(StrokeStyle(lineWidth: 2.5))
-                        .interpolationMethod(.catmullRom)
-
-                        PointMark(
-                            x: .value("Day", idx),
-                            y: .value("Level", entry.level)
-                        )
-                        .foregroundStyle(Color.qmAccent)
-                        .symbolSize(36)
                     }
+                    .disabled(newTaskText.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .buttonStyle(.plain)
                 }
-                .chartYScale(domain: 0...10)
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(values: [0, 5, 10]) { value in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4]))
-                            .foregroundStyle(Color.qmHair)
-                        AxisValueLabel {
-                            if let v = value.as(Int.self) {
-                                Text("\(v)")
-                                    .font(.caption2)
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+
+                Divider()
+
+                List {
+                    // Carried section (top) — tasks with carryCount > 0
+                    let carried = appModel.activeTasks.filter { $0.carryCount > 0 }
+                    if !carried.isEmpty {
+                        Section {
+                            ForEach(carried) { task in
+                                taskRow(task)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            appModel.completeTask(task)
+                                        } label: {
+                                            Label("Done", systemImage: "checkmark.circle.fill")
+                                        }
+                                        .tint(Color.qmCorrect)
+
+                                        if store.isPro {
+                                            Button(role: .destructive) {
+                                                appModel.dropTask(task)
+                                            } label: {
+                                                Label("Drop", systemImage: "xmark.circle.fill")
+                                            }
+                                            .tint(Color.qmWrong)
+                                        }
+                                    }
+                            }
+                        } header: {
+                            HStack {
+                                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                                    .foregroundStyle(Color.qmAccent)
+                                Text("Carried Forward")
                                     .foregroundStyle(.secondary)
                             }
+                            .font(.caption.weight(.semibold))
+                            .textCase(nil)
+                        }
+                    }
+
+                    // Today section — tasks added today with no carry
+                    let todayItems = appModel.activeTasks.filter { $0.carryCount == 0 }
+                    if !todayItems.isEmpty {
+                        Section {
+                            ForEach(todayItems) { task in
+                                taskRow(task)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            appModel.completeTask(task)
+                                        } label: {
+                                            Label("Done", systemImage: "checkmark.circle.fill")
+                                        }
+                                        .tint(Color.qmCorrect)
+                                    }
+                            }
+                        } header: {
+                            Text("Today")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .textCase(nil)
+                        }
+                    }
+
+                    // Completed section (collapsible)
+                    if !appModel.completedTasks.isEmpty {
+                        Section {
+                            if showCompletedSection {
+                                ForEach(appModel.completedTasks.prefix(20)) { task in
+                                    HStack {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(Color.qmCorrect)
+                                        Text(task.title)
+                                            .foregroundStyle(.secondary)
+                                            .strikethrough()
+                                        Spacer()
+                                    }
+                                    .swipeActions(edge: .trailing) {
+                                        Button {
+                                            appModel.uncompleteTask(task)
+                                        } label: {
+                                            Label("Undo", systemImage: "arrow.uturn.backward.circle")
+                                        }
+                                        .tint(Color.qmAccent)
+                                    }
+                                }
+                            }
+                        } header: {
+                            Button {
+                                withAnimation { showCompletedSection.toggle() }
+                            } label: {
+                                HStack {
+                                    Text("Completed (\(appModel.completedTasks.count))")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .textCase(nil)
+                                    Image(systemName: showCompletedSection ? "chevron.up" : "chevron.down")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
-                .frame(height: 140)
-            }
-
-            // Divider
-            Divider()
-
-            // Log energy section
-            VStack(spacing: 12) {
-                HStack {
-                    Text("Energy level")
-                        .font(.headline)
-                    Spacer()
-                    Text("\(Int(sliderValue.rounded()))")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(Color.qmAccent)
-                        .monospacedDigit()
-                        .frame(width: 32)
-                }
-
-                Slider(value: $sliderValue, in: 0...10, step: 1)
-                    .tint(Color.qmAccent)
-                    .onChange(of: sliderValue) { _, _ in
-                        Haptics.tap()
-                        logged = false
-                    }
-
-                HStack {
-                    Text("Low")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("High")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    appModel.logEnergy(level: Int(sliderValue.rounded()))
-                    Haptics.success()
-                    logged = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: logged ? "checkmark" : "waveform.path")
-                        Text(logged ? "Logged" : "Log Today's Energy")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .prominentButton()
-                .disabled(logged)
-                .animation(.easeInOut(duration: 0.2), value: logged)
+                .listStyle(.insetGrouped)
+                .scrollDismissesKeyboard(.interactively)
             }
         }
-        .qmCard()
-        .onAppear {
-            if let today = appModel.todayEntry {
-                sliderValue = Double(today.level)
-                logged = true
+        .navigationTitle("Tasks")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func taskRow(_ task: CarryTask) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                appModel.completeTask(task)
+                Haptics.success()
+            } label: {
+                Image(systemName: "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.qmAccent)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                if task.carryCount > 0 {
+                    Text(task.ageDescription)
+                        .font(.caption)
+                        .foregroundStyle(task.carryCount >= 5 ? Color.qmWrong : Color.qmAccent)
+                }
             }
         }
+        .padding(.vertical, 2)
+    }
+
+    private func submitTask() {
+        let trimmed = newTaskText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        appModel.addTask(title: trimmed)
+        newTaskText = ""
+        fieldFocused = false
     }
 }

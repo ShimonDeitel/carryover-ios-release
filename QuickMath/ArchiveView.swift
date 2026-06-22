@@ -1,242 +1,159 @@
 import SwiftUI
 import Charts
 
+/// Pro feature: age insights showing most-procrastinated tasks over time.
 struct InsightsView: View {
     @EnvironmentObject var appModel: AppModel
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedSegment = 0
-    private let segments = ["History", "Dual Wave", "Insights"]
-
     var body: some View {
         NavigationStack {
             ZStack {
                 QMBackground()
-
-                if !store.isPro {
-                    VStack(spacing: 16) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(Color.qmAccent)
-                        Text("Tideline Pro Required")
-                            .font(.title2.weight(.bold))
-                        Text("Unlock multi-month history, dual-wave comparison and insights.")
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 32)
-                        Button("Dismiss") { dismiss() }
-                            .softButton()
-                    }
-                } else {
-                    ScrollView {
-                        VStack(spacing: 24) {
-                            Picker("View", selection: $selectedSegment) {
-                                ForEach(0..<segments.count, id: \.self) { i in
-                                    Text(segments[i]).tag(i)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .padding(.horizontal, 16)
-
-                            switch selectedSegment {
-                            case 0: historySection
-                            case 1: dualWaveSection
-                            default: insightsSection
-                            }
-
-                            Spacer(minLength: 32)
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Summary tiles
+                        HStack(spacing: 12) {
+                            MetricTile(
+                                value: "\(appModel.totalCarriedToday)",
+                                label: "Carried Today"
+                            )
+                            MetricTile(
+                                value: String(format: "%.1f", appModel.avgCarryCount),
+                                label: "Avg Days"
+                            )
+                            MetricTile(
+                                value: "\(appModel.topProcrastinated.count)",
+                                label: "Still Open"
+                            )
                         }
-                        .padding(.top, 8)
+                        .padding(.horizontal)
+
+                        // Most procrastinated chart
+                        if !appModel.topProcrastinated.isEmpty {
+                            procrastinatedCard
+                        }
+
+                        // Task age breakdown
+                        ageBreakdownCard
+
+                        // Bulk drop section (Pro)
+                        if !appModel.topProcrastinated.isEmpty {
+                            bulkActionsCard
+                        }
+
+                        Spacer(minLength: 40)
                     }
+                    .padding(.top, 12)
                 }
             }
-            .navigationTitle("Insights")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Age Insights")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-
-    // MARK: - History
-    private var historySection: some View {
-        VStack(spacing: 16) {
-            // Full history chart
-            if appModel.allEntries.isEmpty {
-                Text("No data yet. Start logging your energy each day.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(32)
-            } else {
-                let sorted = appModel.allEntries.sorted { $0.date < $1.date }
-                Chart {
-                    ForEach(Array(sorted.enumerated()), id: \.offset) { idx, entry in
-                        LineMark(
-                            x: .value("Day", idx),
-                            y: .value("Level", entry.level)
-                        )
                         .foregroundStyle(Color.qmAccent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(.catmullRom)
-
-                        AreaMark(
-                            x: .value("Day", idx),
-                            yStart: .value("Base", 0),
-                            yEnd: .value("Level", entry.level)
-                        )
-                        .foregroundStyle(Color.qmAccent.opacity(0.15))
-                        .interpolationMethod(.catmullRom)
-                    }
                 }
-                .chartYScale(domain: 0...10)
-                .chartXAxis(.hidden)
-                .frame(height: 180)
-                .padding(.horizontal, 16)
-
-                // Entry list
-                LazyVStack(spacing: 1) {
-                    ForEach(sorted.reversed()) { entry in
-                        HStack {
-                            Text(entry.date, style: .date)
-                                .font(.subheadline)
-                            Spacer()
-                            Text(entry.partOfDay.capitalized)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(entry.level)")
-                                .font(.headline.monospacedDigit())
-                                .foregroundStyle(Color.qmAccent)
-                                .frame(width: 28, alignment: .trailing)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Color.qmCard)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .padding(.horizontal, 16)
             }
         }
     }
 
-    // MARK: - Dual Wave
-    private var dualWaveSection: some View {
-        VStack(spacing: 16) {
-            Text("Morning vs Evening")
+    // MARK: - Charts Card
+
+    private var procrastinatedCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Most Procrastinated")
                 .font(.headline)
+                .foregroundStyle(.primary)
 
-            let mornings = appModel.allEntries.filter { $0.partOfDay == "morning" }.sorted { $0.date < $1.date }
-            let evenings = appModel.allEntries.filter { $0.partOfDay == "evening" }.sorted { $0.date < $1.date }
-
-            if mornings.isEmpty && evenings.isEmpty {
-                Text("Use the morning/evening toggle when logging to see your dual-wave comparison.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(32)
-            } else {
-                Chart {
-                    ForEach(Array(mornings.enumerated()), id: \.offset) { idx, entry in
-                        LineMark(
-                            x: .value("Day", idx),
-                            y: .value("Morning", entry.level),
-                            series: .value("Time", "Morning")
-                        )
-                        .foregroundStyle(Color.qmAccent)
-                        .interpolationMethod(.catmullRom)
-                    }
-                    ForEach(Array(evenings.enumerated()), id: \.offset) { idx, entry in
-                        LineMark(
-                            x: .value("Day", idx),
-                            y: .value("Evening", entry.level),
-                            series: .value("Time", "Evening")
-                        )
-                        .foregroundStyle(Color.qmCorrect)
-                        .interpolationMethod(.catmullRom)
-                    }
-                }
-                .chartYScale(domain: 0...10)
-                .chartXAxis(.hidden)
-                .chartLegend(.visible)
-                .frame(height: 180)
-                .padding(.horizontal, 16)
-
-                HStack(spacing: 16) {
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.qmAccent).frame(width: 10, height: 10)
-                        Text("Morning").font(.caption).foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.qmCorrect).frame(width: 10, height: 10)
-                        Text("Evening").font(.caption).foregroundStyle(.secondary)
-                    }
+            let top5 = Array(appModel.topProcrastinated.prefix(5))
+            Chart(top5) { task in
+                BarMark(
+                    x: .value("Days", task.carryCount),
+                    y: .value("Task", shortenedTitle(task.title))
+                )
+                .foregroundStyle(
+                    task.carryCount >= 7 ? Color.qmWrong :
+                    task.carryCount >= 3 ? Color.qmAccent : Color.qmCorrect
+                )
+                .cornerRadius(4)
+                .annotation(position: .trailing) {
+                    Text("\(task.carryCount)d")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisValueLabel()
+                }
+            }
+            .frame(height: CGFloat(top5.count) * 44 + 20)
         }
-        .padding(.horizontal, 16)
+        .qmCard()
+        .padding(.horizontal)
     }
 
-    // MARK: - Insights
-    private var insightsSection: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                MetricTile(
-                    value: String(format: "%.1f", appModel.sevenDayAverage),
-                    label: "7-day avg"
-                )
-                MetricTile(
-                    value: "\(appModel.currentStreak)",
-                    label: "Day streak"
-                )
-                MetricTile(
-                    value: appModel.bestTimeOfDay,
-                    label: "Best time"
-                )
-            }
+    // MARK: - Age breakdown
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Energy Insights")
-                    .font(.headline)
+    private var ageBreakdownCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Task Age Breakdown")
+                .font(.headline)
+                .foregroundStyle(.primary)
 
-                insightRow(
-                    icon: "sun.max",
-                    title: "Best time of day",
-                    value: appModel.bestTimeOfDay
-                )
-                insightRow(
-                    icon: "flame",
-                    title: "Current streak",
-                    value: "\(appModel.currentStreak) days"
-                )
-                insightRow(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "Total entries",
-                    value: "\(appModel.allEntries.count)"
-                )
-                insightRow(
-                    icon: "waveform.path.ecg",
-                    title: "Average energy",
-                    value: String(format: "%.1f / 10", appModel.sevenDayAverage)
-                )
+            let all = appModel.topProcrastinated
+            let fresh = all.filter { $0.carryCount == 0 }.count
+            let aging = all.filter { $0.carryCount >= 1 && $0.carryCount < 7 }.count
+            let old = all.filter { $0.carryCount >= 7 }.count
+
+            ForEach([
+                ("Fresh (Today)", fresh, Color.qmCorrect),
+                ("Aging (1-6d)", aging, Color.qmAccent),
+                ("Old (7d+)", old, Color.qmWrong)
+            ], id: \.0) { label, count, color in
+                HStack {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                    Text(label).font(.subheadline).foregroundStyle(.primary)
+                    Spacer()
+                    Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                }
             }
-            .qmCard()
         }
-        .padding(.horizontal, 16)
+        .qmCard()
+        .padding(.horizontal)
     }
 
-    private func insightRow(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundStyle(Color.qmAccent)
-                .frame(width: 24)
-            Text(title)
-                .font(.subheadline)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+    // MARK: - Bulk Actions (Pro)
+
+    private var bulkActionsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Bulk Actions")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Button {
+                let oldTasks = appModel.topProcrastinated.filter { $0.carryCount >= 14 }
+                oldTasks.forEach { appModel.dropTask($0) }
+                Haptics.warning()
+            } label: {
+                HStack {
+                    Image(systemName: "xmark.circle")
+                    Text("Drop tasks carried 14+ days")
+                }
+                .foregroundStyle(Color.qmWrong)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 4)
         }
+        .qmCard()
+        .padding(.horizontal)
+    }
+
+    private func shortenedTitle(_ title: String) -> String {
+        title.count > 20 ? String(title.prefix(17)) + "..." : title
     }
 }

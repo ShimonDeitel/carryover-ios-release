@@ -1,89 +1,174 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @EnvironmentObject var store: Store
     @EnvironmentObject var appModel: AppModel
+    @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("quickmath.theme") private var themeRaw = AppTheme.system.rawValue
-
     @State private var showPaywall = false
     @State private var showDeleteConfirm = false
-
-    private var theme: Binding<AppTheme> {
-        Binding(
-            get: { AppTheme(rawValue: themeRaw) ?? .system },
-            set: { themeRaw = $0.rawValue }
-        )
-    }
+    @State private var showReminderPicker = false
+    @AppStorage("carryover.reminder.hour") private var reminderHour = 7
+    @AppStorage("carryover.reminder.enabled") private var reminderEnabled = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 QMBackground()
-
                 List {
-                    // Pro section
-                    Section("Subscription") {
+                    // Pro status
+                    Section {
                         if store.isPro {
                             HStack {
-                                Text("Tideline Pro")
+                                Image(systemName: "checkmark.seal.fill")
+                                    .foregroundStyle(Color.qmAccent)
+                                Text("Carryover Pro — Active")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
                                 Spacer()
-                                Text("Active")
-                                    .foregroundStyle(Color.qmCorrect)
-                                    .font(.subheadline.weight(.medium))
                             }
-                            Link("Manage Subscription",
-                                 destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
-                                .foregroundStyle(Color.qmAccent)
+                            Link(destination: URL(string: "https://apps.apple.com/account/subscriptions")!) {
+                                HStack {
+                                    Text("Manage Subscription")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.qmAccent)
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         } else {
-                            Button("Unlock Tideline Pro") {
+                            Button {
                                 showPaywall = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "lock.open.fill")
+                                        .foregroundStyle(Color.qmAccent)
+                                    Text("Unlock Carryover Pro")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Color.qmAccent)
+                                    Spacer()
+                                    Text("$0.99/mo")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            .foregroundStyle(Color.qmAccent)
-                        }
+                            .buttonStyle(.plain)
 
-                        Button("Restore Purchase") {
-                            Task { await store.restore() }
+                            Button {
+                                Task { await store.restore() }
+                            } label: {
+                                HStack {
+                                    Text("Restore Purchase")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.qmAccent)
+                                    Spacer()
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .foregroundStyle(Color.qmAccent)
+                    } header: {
+                        Text("Pro")
                     }
 
                     // Appearance
-                    Section("Appearance") {
-                        Picker("Theme", selection: theme) {
-                            ForEach(AppTheme.allCases) { t in
-                                Text(t.label).tag(t)
+                    Section {
+                        Picker("Appearance", selection: $themeRaw) {
+                            ForEach(AppTheme.allCases) { theme in
+                                Text(theme.label).tag(theme.rawValue)
                             }
                         }
                         .pickerStyle(.segmented)
+                    } header: {
+                        Text("Appearance")
+                    }
+
+                    // Morning reminder (Pro only)
+                    if store.isPro {
+                        Section {
+                            Toggle(isOn: $reminderEnabled) {
+                                HStack {
+                                    Image(systemName: "bell.fill")
+                                        .foregroundStyle(Color.qmAccent)
+                                    Text("Morning Reminder")
+                                }
+                            }
+                            .onChange(of: reminderEnabled) { _, on in
+                                if on {
+                                    Task {
+                                        let granted = await Reminders.requestAuthorization()
+                                        if granted {
+                                            Reminders.schedule(hour: reminderHour, minute: 0)
+                                        } else {
+                                            reminderEnabled = false
+                                        }
+                                    }
+                                } else {
+                                    Reminders.cancel()
+                                }
+                            }
+
+                            if reminderEnabled {
+                                Stepper("Remind at \(reminderHour):00", value: $reminderHour, in: 4...11)
+                                    .onChange(of: reminderHour) { _, hour in
+                                        Reminders.schedule(hour: hour, minute: 0)
+                                    }
+                            }
+                        } header: {
+                            Text("Notifications")
+                        }
                     }
 
                     // Legal
-                    Section("Legal") {
-                        Link("Privacy Policy",
-                             destination: URL(string: "https://shimondeitel.github.io/tideline-site/privacy.html")!)
-                            .foregroundStyle(Color.qmAccent)
-                        Link("Terms of Use",
-                             destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-                            .foregroundStyle(Color.qmAccent)
+                    Section {
+                        Link(destination: URL(string: "https://shimondeitel.github.io/carryover-site/privacy.html")!) {
+                            HStack {
+                                Text("Privacy Policy")
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Link(destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!) {
+                            HStack {
+                                Text("Terms of Use")
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("Legal")
                     }
 
-                    // Data
-                    Section("Data") {
-                        Button("Delete All Data") {
+                    // Danger zone
+                    Section {
+                        Button(role: .destructive) {
                             showDeleteConfirm = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "trash")
+                                Text("Delete All Data")
+                            }
                         }
-                        .foregroundStyle(Color.qmWrong)
+                    } header: {
+                        Text("Danger Zone")
                     }
                 }
-                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .foregroundStyle(Color.qmAccent)
                 }
             }
             .sheet(isPresented: $showPaywall) {
@@ -91,16 +176,17 @@ struct SettingsView: View {
                     .environmentObject(store)
             }
             .confirmationDialog(
-                "Delete all Tideline data?",
+                "Delete all tasks, history and settings?",
                 isPresented: $showDeleteConfirm,
                 titleVisibility: .visible
             ) {
                 Button("Delete All", role: .destructive) {
                     appModel.deleteAllData()
+                    dismiss()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes all your logged energy entries and cannot be undone.")
+                Text("This action cannot be undone.")
             }
         }
     }
